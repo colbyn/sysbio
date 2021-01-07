@@ -47,6 +47,8 @@ pub enum Ast {
     Symbol(String),
     Function(String, Vec<Ast>),
     Relation(Box<Ast>, String, Box<Ast>),
+    /// Some functions contain a single string argument for some reason.
+    String(String),
 }
 
 
@@ -59,7 +61,7 @@ fn parens<'a, F: 'a, O, E: ParseError<&'a str>>(
 ) -> impl FnMut(&'a str) -> IResult<&'a str, O, E>
     where F: Fn(&'a str) -> IResult<&'a str, O, E>
 {
-  delimited(char('('), inner, char(')'))
+    delimited(char('('), inner, char(')'))
 }
 
 fn identifier(source: &str) -> Result<(&str, String), nom::Err<nom::error::Error<&str>>> {
@@ -120,6 +122,14 @@ fn parse_ns_arg(
     default_parser(source)
 }
 
+fn parse_ns(
+    source: &str
+) -> Result<(&str, Ast), nom::Err<nom::error::Error<&str>>>
+{
+    let (rest, ns_arg) = parse_ns_arg(source)?;
+    Ok((rest, Ast::NsArg(ns_arg)))
+}
+
 fn parse_symbol_to_ast(
     source: &str
 ) -> Result<(&str, Ast), nom::Err<nom::error::Error<&str>>>
@@ -145,6 +155,7 @@ fn parse_symbol_to_ast(
         tag("W"),
         tag("Y"),
         tag("V"),
+        tag("U"),
     ));
     let long = alt((
         tag("Ala"),
@@ -172,34 +183,40 @@ fn parse_symbol_to_ast(
     Ok((rest, Ast::Symbol(sym.to_owned())))
 }
 
+fn parse_string_to_ast(
+    source: &str
+) -> Result<(&str, Ast), nom::Err<nom::error::Error<&str>>>
+{
+    use crate::parser_utils::string::parse_string;
+    let (rest, value) = parse_string(source)?;
+    Ok((rest, Ast::String(value)))
+}
+
 fn parse_function(
     source: &str
 ) -> Result<(&str, Ast), nom::Err<nom::error::Error<&str>>>
 {
-    fn parse_ns(
+    fn term_parser(
         source: &str
     ) -> Result<(&str, Ast), nom::Err<nom::error::Error<&str>>> {
-        let (source, ns) = parse_ns_arg(source)?;
-        Ok((source, Ast::NsArg(ns)))
+        alt((
+            parse_arg_relation,
+            parse_ns,
+            parse_function,
+            parse_symbol_to_ast,
+            parse_string_to_ast,
+        ))(source)
     }
-    fn ns_or_fun_call(
-        source: &str
-    ) -> Result<(&str, Ast), nom::Err<nom::error::Error<&str>>> {
-        alt((parse_ns, parse_function, parse_symbol_to_ast))(source)
-    }
-    fn args_between_comma(
-        source: &str
-    ) -> Result<(&str, Vec<Ast>), nom::Err<nom::error::Error<&str>>> {
-        separated_list1(tag(","), ns_or_fun_call)(source)
-    }
-    fn arg_parser(
+    fn function_arguments(
         source: &str
     ) -> Result<(&str, Vec<Ast>), nom::Err<nom::error::Error<&str>>> {
-        let (source, args) = parens(args_between_comma)(source)?;
+        let (source, _) = tag("(")(source)?;
+        let (source, args) = separated_list1(ws(char(',')), ws(term_parser))(source)?;
+        let (source, _) = tag(")")(source)?;
         Ok((source, args))
     }
     let (source, name) = ws(identifier)(source)?;
-    let (source, mut args) = ws(arg_parser)(source)?;
+    let (source, args) = ws(function_arguments)(source)?;
     let ast = Ast::Function(
         name,
         args,
@@ -207,15 +224,27 @@ fn parse_function(
     Ok((source, ast))
 }
 
-fn term_parser(
+fn top_level_parser(
     source: &str
 ) -> Result<(&str, Ast), nom::Err<nom::error::Error<&str>>> {
-    parse_function(source)
+    parse_relation(source, true)
+}
+
+fn parse_arg_relation(
+    source: &str,
+) -> Result<(&str, Ast), nom::Err<nom::error::Error<&str>>> {
+    parse_relation(source, false)
 }
 
 fn parse_relation(
-    source: &str
+    source: &str,
+    top_level: bool,
 ) -> Result<(&str, Ast), nom::Err<nom::error::Error<&str>>> {
+    fn term_parser(
+        source: &str,
+    ) -> Result<(&str, Ast), nom::Err<nom::error::Error<&str>>> {
+        alt((parse_function, parse_ns))(source)
+    }
     let (source, left) = ws(term_parser)(source)?;
     let (source, relation) = ws(identifier)(source)?;
     let (source, right) = ws(term_parser)(source)?;
@@ -237,9 +266,35 @@ pub enum ParserError {
     ParserError(String),
 }
 
+#[derive(Debug, Clone)]
+pub struct ErrorReport {
+    pub error: ParserError,
+    pub line: String,
+}
+
+impl std::fmt::Display for ErrorReport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let lines = vec![
+            format!("[crate bel-format] given line: {}", &self.line),
+            match &self.error {
+                ParserError::Unparsed(rest) => {
+                    format!("\t☞ [unparsed input]: {:?}\n", rest)
+                }
+                ParserError::ParserError(msg) => {
+                    format!("\t☞ [parser error]: {}\n", msg)
+                }
+            }
+        ];
+        write!(f, "{}", lines.join("\n"))
+    }
+}
+
+
+/// `log_errors` will print error messgaes to stdout while parsing.
 pub(crate) fn parse_lines(
-    source: &str
-) -> (Vec<Ast>, Vec<ParserError>) {
+    source: &str,
+    log_errors: bool,
+) -> (Vec<Ast>, Vec<ErrorReport>) {
     let (ast, errors) = source
         .lines()
         .filter(|line| {
@@ -257,14 +312,29 @@ pub(crate) fn parse_lines(
         .filter(|line| {
             !line.trim().is_empty()
         })
-        .map(|line| match parse_function(line) {
+        .map(|line| match top_level_parser(line) {
             Ok((rest, xs)) if !rest.is_empty() => {
-                (Some(xs), Some(ParserError::Unparsed(rest.to_owned())))
+                let error = ParserError::Unparsed(rest.to_owned());
+                let report = ErrorReport {
+                    error,
+                    line: line.to_owned(),
+                };
+                if log_errors {
+                    eprintln!("{}", report);
+                }
+                (Some(xs), Some(report))
             }
             Ok((_, xs)) => (Some(xs), None),
             Err(msg) => {
                 let error = ParserError::ParserError(format!("{}", msg));
-                (None, Some(error))
+                let report = ErrorReport {
+                    error,
+                    line: line.to_owned(),
+                };
+                if log_errors {
+                    eprintln!("{}", report);
+                }
+                (None, Some(report))
             }
         })
         .unzip::<_, _, Vec<_>, Vec<_>>();
