@@ -8,6 +8,7 @@ categories = ["science", "simulation", "parser-implementations"]
 keywords = ["bel", "biology"]
 homepage = "https://github.com/colbyn/sysbio"
 repository = "https://github.com/colbyn/sysbio"
+license = "MIT"
 
 [dependencies]
 nom = "6.0.1"
