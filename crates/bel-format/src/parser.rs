@@ -51,6 +51,43 @@ pub enum Ast {
     String(String),
 }
 
+impl std::fmt::Display for NsArg {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(label) = self.label.as_ref() {
+            write!(f, "{}:{} ! {}", self.prefix, self.value, label)
+        } else {
+            write!(f, "{}:{}", self.prefix, self.value)
+        }
+    }
+}
+
+impl std::fmt::Display for Ast {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Ast::NsArg(ns) => {
+                write!(f, "{}", ns)
+            }
+            Ast::Symbol(sym) => {
+                write!(f, "{}", sym)
+            }
+            Ast::Function(name, args) => {
+                let args = args
+                    .iter()
+                    .map(|x| format!("{}", x))
+                    .collect::<Vec<String>>()
+                    .join(", ");
+                write!(f, "{}({})", name, args)
+            }
+            Ast::Relation(left, infix_op, right) => {
+                write!(f, "{} {} {}", left, infix_op, right)
+            }
+            Ast::String(string) => {
+                write!(f, "{:?}", string)
+            }
+        }
+    }
+}
+
 
 ///////////////////////////////////////////////////////////////////////////////
 // INTERNAL PARSER UTILS
