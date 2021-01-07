@@ -6,6 +6,8 @@ edition = "2018"
 description = "A POC parser for the Biological Expression Language (BEL) format."
 categories = ["science", "simulation", "parser-implementations"]
 keywords = ["bel", "biology"]
+homepage = "https://github.com/colbyn/sysbio"
+repository = "https://github.com/colbyn/sysbio"
 
 [dependencies]
 nom = "6.0.1"
