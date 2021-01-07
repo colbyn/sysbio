@@ -1,0 +1,11 @@
+[package]
+name = "bel-format"
+version = "0.1.0"
+authors = ["Colbyn Wadman <hello@colbyn.com>"]
+edition = "2018"
+description = "A POC parser for the Biological Expression Language (BEL) format."
+categories = ["science", "simulation", "parser-implementations"]
+keywords = ["bel", "biology"]
+
+[dependencies]
+nom = "6.0.1"
